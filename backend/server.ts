@@ -2,22 +2,11 @@ import express, { Request, Response, NextFunction } from 'express';
 import http from 'http';
 import { Server } from 'socket.io';
 import cors from 'cors';
-import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-
-// Import models
-import Delivery from './models/Delivery';
-import Vehicle from './models/Vehicle';
-import User from './models/User';
-import Tracking from './models/Tracking';
-import DeliveryLog from './models/DeliveryLog';
-
-// Import utilities
-import { ScheduleValidator } from './utils/scheduleValidator';
-import { DeliveryLogger } from './services/deliveryLogger';
+import jwt from 'jsonwebtoken';
 
 // Load environment variables
 dotenv.config();
@@ -33,7 +22,6 @@ const io = new Server(server, {
 });
 
 const PORT = process.env.PORT || 3001;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/fleet-management';
 
 // Middleware
 app.use(helmet());
@@ -53,14 +41,225 @@ const limiter = rateLimit({
 });
 app.use('/api/', limiter);
 
+// In-memory storage for demo (since no MongoDB)
+interface Delivery {
+  _id: string;
+  pickup: {
+    address: string;
+    coordinates?: [number, number];
+    scheduledTime?: Date;
+  };
+  delivery: {
+    address: string;
+    coordinates?: [number, number];
+    scheduledTime?: Date;
+  };
+  customer: {
+    name: string;
+    email?: string;
+    phone?: string;
+  };
+  package?: {
+    weight?: number;
+    dimensions?: string;
+    description?: string;
+  };
+  driver?: string;
+  status: 'pending' | 'assigned' | 'accepted' | 'started' | 'in-transit' | 'arrived' | 'delivered' | 'rejected';
+  estimatedTime?: number;
+  acceptedAt?: Date;
+  startedAt?: Date;
+  arrivedAt?: Date;
+  completedAt?: Date;
+  rejectedAt?: Date;
+  notes?: string;
+  rejectionReason?: string;
+  createdAt: Date;
+}
+
+interface Driver {
+  _id: string;
+  name: string;
+  email: string;
+  phone: string;
+  vehicleId?: string;
+  status: 'available' | 'busy' | 'offline';
+}
+
+interface Tracking {
+  _id: string;
+  driverId: string;
+  location: {
+    type: string;
+    coordinates: [number, number];
+  };
+  timestamp: Date;
+  heading?: number;
+  speed?: number;
+}
+
+interface DeliveryLog {
+  _id: string;
+  deliveryId: string;
+  driverId?: string;
+  previousStatus: string;
+  newStatus: string;
+  location?: [number, number];
+  notes?: string;
+  timestamp: Date;
+  ipAddress?: string;
+  userAgent?: string;
+}
+
+// In-memory storage
+const deliveries: Map<string, Delivery> = new Map();
+const drivers: Map<string, Driver> = new Map();
+const tracking: Map<string, Tracking> = new Map();
+const deliveryLogs: Map<string, DeliveryLog> = new Map();
+
 // Store active connections
 const activeConnections = new Map();
 const driverLocations = new Map();
 
+// Utility functions for in-memory storage
+const generateId = () => Math.random().toString(36).substr(2, 9);
+
+const findDeliveryById = (id: string): Delivery | undefined => deliveries.get(id);
+const findDriverById = (id: string): Driver | undefined => drivers.get(id);
+const findTrackingByDriver = (driverId: string): Tracking[] =>
+  Array.from(tracking.values()).filter(t => t.driverId === driverId);
+
+// Initialize demo data
+const initializeDemoDataOriginal = () => {
+  // Demo drivers
+  const demoDrivers: Driver[] = [
+    {
+      _id: 'driver1',
+      name: 'John Smith',
+      email: 'driver@fleet.com',
+      phone: '+1234567890',
+      status: 'available'
+    },
+    {
+      _id: 'driver2',
+      name: 'Sarah Johnson',
+      email: 'sarah@fleet.com',
+      phone: '+1234567891',
+      status: 'available'
+    }
+  ];
+
+  demoDrivers.forEach(driver => drivers.set(driver._id, driver));
+
+  // Demo deliveries
+  const demoDeliveries: Delivery[] = [
+    {
+      _id: 'delivery1',
+      pickup: {
+        address: 'Gachibowli, Hyderabad',
+        coordinates: [17.440495, 78.348684]
+      },
+      delivery: {
+        address: 'Madhapur, Hyderabad',
+        coordinates: [17.448378, 78.391670]
+      },
+      customer: {
+        name: 'Alice Cooper',
+        email: 'alice@example.com',
+        phone: '+1234567892'
+      },
+      package: {
+        weight: 2.5,
+        dimensions: '30x20x10 cm',
+        description: 'Electronics'
+      },
+      driver: 'driver1',
+      status: 'in-transit',
+      estimatedTime: 30,
+      createdAt: new Date()
+    },
+    {
+      _id: 'delivery2',
+      pickup: {
+        address: 'Hitech City, Hyderabad',
+        coordinates: [17.443464, 78.499729]
+      },
+      delivery: {
+        address: 'Secunderabad, Hyderabad',
+        coordinates: [17.443464, 78.499729]
+      },
+      customer: {
+        name: 'Bob Wilson',
+        email: 'bob@example.com',
+        phone: '+1234567893'
+      },
+      package: {
+        weight: 1.2,
+        dimensions: '25x15x8 cm',
+        description: 'Documents'
+      },
+      driver: 'driver2',
+      status: 'started',
+      estimatedTime: 25,
+      createdAt: new Date()
+    }
+  ];
+
+  demoDeliveries.forEach(delivery => deliveries.set(delivery._id, delivery));
+
+  console.log('✅ Demo data initialized');
+};
+
+const initializeAuthDemoData = () => {
+  const demoUsers: User[] = [
+    {
+      _id: 'admin1',
+      name: 'Admin User',
+      email: 'admin@fleet.com',
+      role: 'admin',
+      phone: '+1234567890',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    },
+    {
+      _id: 'driver1',
+      name: 'Driver User',
+      email: 'driver@fleet.com',
+      role: 'driver',
+      phone: '+1234567891',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    },
+    {
+      _id: 'customer1',
+      name: 'Customer User',
+      email: 'customer@fleet.com',
+      role: 'customer',
+      phone: '+1234567892',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    }
+  ];
+
+  const demoPasswords = [
+    { email: 'admin@fleet.com', password: 'admin123' },
+    { email: 'driver@fleet.com', password: 'driver123' },
+    { email: 'customer@fleet.com', password: 'customer123' }
+  ];
+
+  demoUsers.forEach(user => users.set(user._id, user));
+  demoPasswords.forEach(({ email, password }) => userPasswords.set(email, password));
+
+  console.log('✅ Authentication demo data initialized');
+};
+
 // Socket.IO connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
-  
+
   // Store connection
   activeConnections.set(socket.id, {
     socketId: socket.id,
@@ -72,7 +271,7 @@ io.on('connection', (socket) => {
   socket.on('driver-location-update', async (data) => {
     try {
       const { driverId, lat, lng, timestamp, heading } = data;
-      
+
       // Store location in memory
       driverLocations.set(driverId, {
         driverId,
@@ -83,16 +282,18 @@ io.on('connection', (socket) => {
         socketId: socket.id
       });
 
-      // Save to database
-      await Tracking.create({
-        driverId: new mongoose.Types.ObjectId(driverId),
+      // Save to in-memory tracking
+      const trackingId = generateId();
+      tracking.set(trackingId, {
+        _id: trackingId,
+        driverId,
         location: {
           type: 'Point',
           coordinates: [lng, lat]
         },
         timestamp: new Date(timestamp),
         heading,
-        speed: 0 // Could be calculated from previous locations
+        speed: 0
       });
 
       // Broadcast to all connected clients
@@ -115,45 +316,63 @@ io.on('connection', (socket) => {
   socket.on('delivery-status-update', async (data) => {
     try {
       const { deliveryId, status, driverId, timestamp, location } = data;
-      
-      // Get current delivery status for logging
-      const currentDelivery = await Delivery.findById(deliveryId);
-      const previousStatus = currentDelivery?.status;
-      
-      // Update delivery status in database
-      const delivery = await Delivery.findByIdAndUpdate(
-        deliveryId,
-        { 
-          status,
-          [`${status}At`]: new Date(timestamp)
-        },
-        { new: true }
-      );
 
-      if (delivery) {
-        // Log the status change
-        await DeliveryLogger.logStatusChange(
-          deliveryId,
-          driverId,
-          previousStatus || 'unknown',
-          status,
-          location,
-          undefined, // notes
-          socket.handshake.address,
-          socket.handshake.headers['user-agent']
-        );
-
-        // Broadcast status update to all clients
-        io.emit('delivery-status-changed', {
-          deliveryId,
-          status,
-          driverId,
-          timestamp,
-          location
-        });
-
-        console.log(`Delivery ${deliveryId} status updated to ${status}`);
+      const delivery = findDeliveryById(deliveryId);
+      if (!delivery) {
+        socket.emit('error', { message: 'Delivery not found' });
+        return;
       }
+
+      const previousStatus = delivery.status;
+
+      // Update delivery status in memory
+      delivery.status = status;
+      const now = new Date(timestamp);
+
+      switch (status) {
+        case 'accepted':
+          delivery.acceptedAt = now;
+          break;
+        case 'started':
+          delivery.startedAt = now;
+          break;
+        case 'arrived':
+          delivery.arrivedAt = now;
+          break;
+        case 'delivered':
+          delivery.completedAt = now;
+          break;
+        case 'rejected':
+          delivery.rejectedAt = now;
+          break;
+      }
+
+      deliveries.set(deliveryId, delivery);
+
+      // Log the status change
+      const logId = generateId();
+      deliveryLogs.set(logId, {
+        _id: logId,
+        deliveryId,
+        driverId,
+        previousStatus,
+        newStatus: status,
+        location,
+        timestamp: now,
+        ipAddress: socket.handshake.address,
+        userAgent: socket.handshake.headers['user-agent']
+      });
+
+      // Broadcast status update to all clients
+      io.emit('delivery-status-changed', {
+        deliveryId,
+        status,
+        driverId,
+        timestamp,
+        location
+      });
+
+      console.log(`Delivery ${deliveryId} status updated to ${status}`);
     } catch (error) {
       console.error('Error updating delivery status:', error);
       socket.emit('error', { message: 'Failed to update delivery status' });
@@ -164,7 +383,7 @@ io.on('connection', (socket) => {
   socket.on('delivery-location-update', async (data) => {
     try {
       const { deliveryId, driverId, location, timestamp, status } = data;
-      
+
       // Broadcast to customers tracking this specific delivery
       socket.broadcast.emit('delivery-live-location', {
         deliveryId,
@@ -184,12 +403,12 @@ io.on('connection', (socket) => {
   socket.on('driver-active-location', async (data) => {
     try {
       const { driverId, location, timestamp } = data;
-      
+
       // Find active deliveries for this driver
-      const activeDeliveries = await Delivery.find({
-        driver: new mongoose.Types.ObjectId(driverId),
-        status: { $in: ['started', 'in-transit', 'arrived'] }
-      });
+      const activeDeliveries = Array.from(deliveries.values()).filter(d =>
+        d.driver === driverId &&
+        ['started', 'in-transit', 'arrived'].includes(d.status)
+      );
 
       // Broadcast location to customers of active deliveries
       activeDeliveries.forEach(delivery => {
@@ -215,7 +434,7 @@ io.on('connection', (socket) => {
       connection.driverId = driverId;
       activeConnections.set(socket.id, connection);
     }
-    
+
     socket.join(`driver-${driverId}`);
     console.log(`Driver ${driverId} connected`);
   });
@@ -223,14 +442,14 @@ io.on('connection', (socket) => {
   // Handle disconnection
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
-    
+
     const connection = activeConnections.get(socket.id);
     if (connection && connection.driverId) {
       // Remove driver location when they disconnect
       driverLocations.delete(connection.driverId);
       socket.leave(`driver-${connection.driverId}`);
     }
-    
+
     activeConnections.delete(socket.id);
   });
 });
@@ -239,11 +458,12 @@ io.on('connection', (socket) => {
 
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
-  res.json({ 
-    status: 'OK', 
+  res.json({
+    status: 'OK',
     timestamp: new Date().toISOString(),
     connections: activeConnections.size,
-    drivers: driverLocations.size
+    drivers: driverLocations.size,
+    mode: 'demo' // Indicate we're running in demo mode
   });
 });
 
@@ -257,7 +477,7 @@ app.get('/api/locations', (req: Request, res: Response) => {
 app.get('/api/locations/:driverId', (req: Request, res: Response) => {
   const { driverId } = req.params;
   const location = driverLocations.get(driverId);
-  
+
   if (location) {
     res.json(location);
   } else {
@@ -269,19 +489,13 @@ app.get('/api/locations/:driverId', (req: Request, res: Response) => {
 app.get('/api/deliveries/:deliveryId/tracking', async (req: Request, res: Response) => {
   try {
     const { deliveryId } = req.params;
-    
-    const delivery = await Delivery.findById(deliveryId);
+
+    const delivery = findDeliveryById(deliveryId);
     if (!delivery || !delivery.driver) {
       return res.status(404).json({ message: 'Delivery or driver not found' });
     }
 
-    const trackingHistory = await Tracking.find({
-      driverId: delivery.driver,
-      timestamp: {
-        $gte: delivery.startedAt || delivery.createdAt,
-        $lte: delivery.completedAt || new Date()
-      }
-    }).sort({ timestamp: 1 });
+    const trackingHistory = findTrackingByDriver(delivery.driver);
 
     res.json(trackingHistory);
   } catch (error) {
@@ -296,48 +510,56 @@ app.put('/api/deliveries/:deliveryId/status', async (req: Request, res: Response
     const { deliveryId } = req.params;
     const { status, driverId, notes } = req.body;
 
-    const updateData: any = { status };
-    
-    // Set timestamp based on status
-    switch (status) {
-      case 'accepted':
-        updateData.acceptedAt = new Date();
-        break;
-      case 'started':
-        updateData.startedAt = new Date();
-        break;
-      case 'in-transit':
-        // No specific timestamp for in-transit
-        break;
-      case 'arrived':
-        updateData.arrivedAt = new Date();
-        break;
-      case 'delivered':
-        updateData.completedAt = new Date();
-        if (notes) updateData.notes = notes;
-        break;
-      case 'rejected':
-        updateData.rejectedAt = new Date();
-        if (notes) updateData.rejectionReason = notes;
-        break;
-    }
-
-    const delivery = await Delivery.findByIdAndUpdate(
-      deliveryId,
-      updateData,
-      { new: true }
-    );
-
+    const delivery = findDeliveryById(deliveryId);
     if (!delivery) {
       return res.status(404).json({ message: 'Delivery not found' });
     }
+
+    const previousStatus = delivery.status;
+    const now = new Date();
+
+    // Update delivery status in memory
+    delivery.status = status;
+
+    switch (status) {
+      case 'accepted':
+        delivery.acceptedAt = now;
+        break;
+      case 'started':
+        delivery.startedAt = now;
+        break;
+      case 'arrived':
+        delivery.arrivedAt = now;
+        break;
+      case 'delivered':
+        delivery.completedAt = now;
+        if (notes) delivery.notes = notes;
+        break;
+      case 'rejected':
+        delivery.rejectedAt = now;
+        if (notes) delivery.rejectionReason = notes;
+        break;
+    }
+
+    deliveries.set(deliveryId, delivery);
+
+    // Log the status change
+    const logId = generateId();
+    deliveryLogs.set(logId, {
+      _id: logId,
+      deliveryId,
+      driverId,
+      previousStatus,
+      newStatus: status,
+      timestamp: now
+    });
 
     // Broadcast status change via socket
     io.emit('delivery-status-changed', {
       deliveryId,
       status,
       driverId,
-      timestamp: new Date().toISOString()
+      timestamp: now.toISOString()
     });
 
     res.json(delivery);
@@ -356,162 +578,50 @@ app.get('/api/drivers/active', (req: Request, res: Response) => {
 // Emergency broadcast to all drivers
 app.post('/api/broadcast/emergency', (req: Request, res: Response) => {
   const { message, type = 'emergency' } = req.body;
-  
+
   io.emit('emergency-broadcast', {
     message,
     type,
     timestamp: new Date().toISOString()
   });
-  
+
   res.json({ message: 'Emergency broadcast sent', recipients: activeConnections.size });
 });
 
-// Schedule validation endpoints
+// Get all deliveries (demo endpoint)
+app.get('/api/deliveries', (req: Request, res: Response) => {
+  const allDeliveries = Array.from(deliveries.values());
+  res.json(allDeliveries);
+});
 
-// Validate delivery schedule
-app.post('/api/schedule/validate', async (req: Request, res: Response) => {
+// Get all drivers (demo endpoint)
+app.get('/api/drivers', (req: Request, res: Response) => {
+  const allDrivers = Array.from(drivers.values());
+  res.json(allDrivers);
+});
+
+// Create new delivery (demo endpoint)
+app.post('/api/deliveries', (req: Request, res: Response) => {
   try {
-    const { driverId, pickupTime, deliveryTime, estimatedTravelTime } = req.body;
-
-    if (!driverId || !pickupTime || !deliveryTime) {
-      return res.status(400).json({ 
-        message: 'Missing required fields: driverId, pickupTime, deliveryTime' 
-      });
-    }
-
-    const validation = await ScheduleValidator.validateDeliverySchedule(
+    const {
+      pickup,
+      delivery,
+      customer,
+      package: packageInfo,
       driverId,
-      new Date(pickupTime),
-      new Date(deliveryTime),
       estimatedTravelTime
-    );
-
-    res.json(validation);
-  } catch (error) {
-    console.error('Error validating schedule:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Get alternative time slots
-app.post('/api/schedule/alternatives', async (req: Request, res: Response) => {
-  try {
-    const { driverId, preferredPickupTime, estimatedTravelTime, maxSuggestions } = req.body;
-
-    if (!driverId || !preferredPickupTime) {
-      return res.status(400).json({ 
-        message: 'Missing required fields: driverId, preferredPickupTime' 
-      });
-    }
-
-    const alternatives = await ScheduleValidator.suggestAlternativeTimeSlots(
-      driverId,
-      new Date(preferredPickupTime),
-      estimatedTravelTime || 30,
-      maxSuggestions || 5
-    );
-
-    res.json({ alternatives });
-  } catch (error) {
-    console.error('Error getting alternative time slots:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Get driver availability
-app.get('/api/drivers/:driverId/availability/:date', async (req: Request, res: Response) => {
-  try {
-    const { driverId, date } = req.params;
-
-    const availability = await ScheduleValidator.getDriverAvailability(
-      driverId,
-      new Date(date)
-    );
-
-    res.json(availability);
-  } catch (error) {
-    console.error('Error getting driver availability:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Check workload limits
-app.get('/api/drivers/:driverId/workload/:date', async (req: Request, res: Response) => {
-  try {
-    const { driverId, date } = req.params;
-
-    const workload = await ScheduleValidator.validateWorkloadLimits(
-      driverId,
-      new Date(date)
-    );
-
-    res.json(workload);
-  } catch (error) {
-    console.error('Error checking workload limits:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Enhanced delivery creation with schedule validation
-app.post('/api/deliveries/create-with-validation', async (req: Request, res: Response) => {
-  try {
-    const { 
-      pickup, 
-      delivery, 
-      customer, 
-      package: packageInfo, 
-      driverId, 
-      estimatedTravelTime 
     } = req.body;
 
     // Validate required fields
     if (!pickup?.address || !delivery?.address || !customer?.name) {
-      return res.status(400).json({ 
-        message: 'Missing required delivery information' 
+      return res.status(400).json({
+        message: 'Missing required delivery information'
       });
     }
 
-    // If driver and scheduled times are provided, validate schedule
-    if (driverId && pickup.scheduledTime && delivery.scheduledTime) {
-      const validation = await ScheduleValidator.validateDeliverySchedule(
-        driverId,
-        new Date(pickup.scheduledTime),
-        new Date(delivery.scheduledTime),
-        estimatedTravelTime
-      );
-
-      if (!validation.isValid) {
-        // Get alternative time slots
-        const alternatives = await ScheduleValidator.suggestAlternativeTimeSlots(
-          driverId,
-          new Date(pickup.scheduledTime),
-          estimatedTravelTime || 30
-        );
-
-        return res.status(409).json({
-          message: 'Schedule conflict detected',
-          conflicts: validation.conflicts,
-          alternatives
-        });
-      }
-
-      // Check workload limits
-      const workload = await ScheduleValidator.validateWorkloadLimits(
-        driverId,
-        new Date(pickup.scheduledTime)
-      );
-
-      if (!workload.isWithinLimits) {
-        return res.status(409).json({
-          message: 'Driver workload limit exceeded',
-          currentWorkload: workload.currentWorkload,
-          maxWorkload: workload.maxWorkload
-        });
-      }
-    }
-
     // Create the delivery
-    const newDelivery = await Delivery.create({
+    const newDelivery: Delivery = {
+      _id: generateId(),
       pickup: {
         address: pickup.address,
         coordinates: pickup.coordinates,
@@ -524,11 +634,13 @@ app.post('/api/deliveries/create-with-validation', async (req: Request, res: Res
       },
       customer,
       package: packageInfo,
-      driver: driverId ? new mongoose.Types.ObjectId(driverId) : undefined,
+      driver: driverId,
       status: driverId ? 'assigned' : 'pending',
       estimatedTime: estimatedTravelTime,
       createdAt: new Date()
-    });
+    };
+
+    deliveries.set(newDelivery._id, newDelivery);
 
     // Broadcast new delivery to relevant clients
     if (driverId) {
@@ -545,118 +657,356 @@ app.post('/api/deliveries/create-with-validation', async (req: Request, res: Res
 
     res.status(201).json({
       message: 'Delivery created successfully',
-      delivery: newDelivery,
-      scheduleValidation: driverId ? 'validated' : 'not_required'
+      delivery: newDelivery
     });
 
   } catch (error) {
-    console.error('Error creating delivery with validation:', error);
+    console.error('Error creating delivery:', error);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
 
-// Delivery logging and analytics endpoints
+// Add authentication endpoints before API Routes section
 
-// Get delivery timeline
-app.get('/api/deliveries/:deliveryId/timeline', async (req: Request, res: Response) => {
-  try {
-    const { deliveryId } = req.params;
-    const timeline = await DeliveryLogger.getDeliveryTimeline(deliveryId);
-    res.json(timeline);
-  } catch (error) {
-    console.error('Error fetching delivery timeline:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
+// Authentication endpoints
 
-// Get driver activity logs
-app.get('/api/drivers/:driverId/activity', async (req: Request, res: Response) => {
+// Register endpoint
+app.post('/api/auth/register', async (req: Request, res: Response) => {
   try {
-    const { driverId } = req.params;
-    const { startDate, endDate, limit } = req.query;
-    
-    const activity = await DeliveryLogger.getDriverActivity(
-      driverId,
-      startDate ? new Date(startDate as string) : undefined,
-      endDate ? new Date(endDate as string) : undefined,
-      limit ? parseInt(limit as string) : 100
+    const { name, email, password, role, phone } = req.body;
+
+    if (!name || !email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Name, email, and password are required'
+      });
+    }
+
+    // Check if user already exists
+    const existingUser = Object.values(users).find(u => u.email === email);
+    if (existingUser) {
+      return res.status(409).json({
+        success: false,
+        message: 'User already exists with this email'
+      });
+    }
+
+    // Create new user
+    const userId = generateId();
+    const newUser: User = {
+      _id: userId,
+      name,
+      email,
+      role: role || 'customer',
+      phone,
+      isActive: true,
+      isEmailVerified: true, // Demo mode - auto-verify
+      createdAt: new Date().toISOString()
+    };
+
+    // Store password separately (in real app, this would be hashed)
+    userPasswords.set(email, password);
+    users.set(userId, newUser);
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: newUser._id, email: newUser.email, role: newUser.role },
+      process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production',
+      { expiresIn: '7d' }
     );
-    
-    res.json(activity);
+
+    res.status(201).json({
+      success: true,
+      message: 'User registered successfully',
+      user: newUser,
+      token
+    });
+
   } catch (error) {
-    console.error('Error fetching driver activity:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('Registration error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
   }
 });
 
-// Get delivery analytics
-app.get('/api/analytics/deliveries', async (req: Request, res: Response) => {
+// Login endpoint
+app.post('/api/auth/login', async (req: Request, res: Response) => {
   try {
-    const { startDate, endDate, driverId } = req.query;
-    
-    const analytics = await DeliveryLogger.getDeliveryAnalytics(
-      startDate ? new Date(startDate as string) : undefined,
-      endDate ? new Date(endDate as string) : undefined,
-      driverId as string
+    const { email, password, role } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email and password are required'
+      });
+    }
+
+    // Find user by email
+    const user = Object.values(users).find(u => u.email === email);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check password
+    const storedPassword = userPasswords.get(email);
+    if (password !== storedPassword) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid credentials'
+      });
+    }
+
+    // Check role if specified
+    if (role && user.role !== role) {
+      return res.status(401).json({
+        success: false,
+        message: 'Invalid role for this account'
+      });
+    }
+
+    // Update last login
+    user.lastLogin = new Date().toISOString();
+
+    // Generate JWT token
+    const token = jwt.sign(
+      { userId: user._id, email: user.email, role: user.role },
+      process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production',
+      { expiresIn: '7d' }
     );
-    
-    res.json(analytics);
-  } catch (error) {
-    console.error('Error fetching delivery analytics:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
 
-// Get location history for a delivery
-app.get('/api/deliveries/:deliveryId/location-history', async (req: Request, res: Response) => {
-  try {
-    const { deliveryId } = req.params;
-    const { startTime, endTime } = req.query;
-    
-    const locationHistory = await DeliveryLogger.getLocationHistory(
-      deliveryId,
-      startTime ? new Date(startTime as string) : undefined,
-      endTime ? new Date(endTime as string) : undefined
-    );
-    
-    res.json(locationHistory);
-  } catch (error) {
-    console.error('Error fetching location history:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Get real-time delivery statistics
-app.get('/api/analytics/realtime', async (req: Request, res: Response) => {
-  try {
-    const stats = await DeliveryLogger.getRealTimeStats();
-    res.json(stats);
-  } catch (error) {
-    console.error('Error fetching real-time stats:', error);
-    res.status(500).json({ message: 'Internal server error' });
-  }
-});
-
-// Manual log cleanup endpoint (admin only)
-app.post('/api/admin/cleanup-logs', async (req: Request, res: Response) => {
-  try {
-    const { daysToKeep = 90 } = req.body;
-    const deletedCount = await DeliveryLogger.cleanupOldLogs(daysToKeep);
-    
     res.json({
-      message: 'Log cleanup completed',
-      deletedCount
+      success: true,
+      message: 'Login successful',
+      user: user,
+      token
     });
+
   } catch (error) {
-    console.error('Error cleaning up logs:', error);
-    res.status(500).json({ message: 'Internal server error' });
+    console.error('Login error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
   }
 });
+
+// Verify token endpoint
+app.get('/api/auth/verify-token', async (req: Request, res: Response) => {
+  try {
+    const authHeader = req.headers.authorization;
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        success: false,
+        message: 'No token provided'
+      });
+    }
+
+    const token = authHeader.substring(7);
+
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-super-secret-jwt-key-change-this-in-production') as any;
+
+    // Find user
+    const user = users.get(decoded.userId);
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    res.json({
+      success: true,
+      user: user
+    });
+
+  } catch (error) {
+    console.error('Token verification error:', error);
+    res.status(401).json({
+      success: false,
+      message: 'Invalid token'
+    });
+  }
+});
+
+// Forgot password endpoint
+app.post('/api/auth/forgot-password', async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    // Check if user exists
+    const user = Object.values(users).find(u => u.email === email);
+    if (!user) {
+      // Don't reveal if user exists or not for security
+      return res.json({
+        success: true,
+        message: 'If the email exists, a reset link has been sent'
+      });
+    }
+
+    // Generate reset token (in real app, send email)
+    const resetToken = generateId();
+    passwordResetTokens.set(email, {
+      token: resetToken,
+      expires: Date.now() + 15 * 60 * 1000 // 15 minutes
+    });
+
+    res.json({
+      success: true,
+      message: 'Password reset instructions sent to your email'
+    });
+
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Reset password endpoint
+app.post('/api/auth/reset-password', async (req: Request, res: Response) => {
+  try {
+    const { token, password } = req.body;
+
+    if (!token || !password) {
+      return res.status(400).json({
+        success: false,
+        message: 'Token and password are required'
+      });
+    }
+
+    // Find reset token
+    let email: string | undefined;
+    for (const [userEmail, resetData] of passwordResetTokens.entries()) {
+      if (resetData.token === token && resetData.expires > Date.now()) {
+        email = userEmail;
+        break;
+      }
+    }
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid or expired reset token'
+      });
+    }
+
+    // Update password
+    userPasswords.set(email, password);
+
+    // Remove reset token
+    passwordResetTokens.delete(email);
+
+    res.json({
+      success: true,
+      message: 'Password reset successful'
+    });
+
+  } catch (error) {
+    console.error('Reset password error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error'
+    });
+  }
+});
+
+// Add missing interfaces and storage
+interface User {
+  _id: string;
+  name: string;
+  email: string;
+  role: 'admin' | 'driver' | 'customer';
+  phone?: string;
+  isActive: boolean;
+  isEmailVerified: boolean;
+  lastLogin?: string;
+  createdAt: string;
+}
+
+interface PasswordResetToken {
+  token: string;
+  expires: number;
+}
+
+// In-memory storage for users and passwords
+const users: Map<string, User> = new Map();
+const userPasswords: Map<string, string> = new Map();
+const passwordResetTokens: Map<string, PasswordResetToken> = new Map();
+
+// Initialize demo users
+const initializeAuthDemoData = () => {
+  const demoUsers: User[] = [
+    {
+      _id: 'admin1',
+      name: 'Admin User',
+      email: 'admin@fleet.com',
+      role: 'admin',
+      phone: '+1234567890',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    },
+    {
+      _id: 'driver1',
+      name: 'Driver User',
+      email: 'driver@fleet.com',
+      role: 'driver',
+      phone: '+1234567891',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    },
+    {
+      _id: 'customer1',
+      name: 'Customer User',
+      email: 'customer@fleet.com',
+      role: 'customer',
+      phone: '+1234567892',
+      isActive: true,
+      isEmailVerified: true,
+      createdAt: new Date().toISOString()
+    }
+  ];
+
+  const demoPasswords = [
+    { email: 'admin@fleet.com', password: 'admin123' },
+    { email: 'driver@fleet.com', password: 'driver123' },
+    { email: 'customer@fleet.com', password: 'customer123' }
+  ];
+
+  demoUsers.forEach(user => users.set(user._id, user));
+  demoPasswords.forEach(({ email, password }) => userPasswords.set(email, password));
+
+  console.log('✅ Authentication demo data initialized');
+};
+
+// Add to initializeDemoData function
+const originalInitializeDemoData = initializeDemoData;
+initializeDemoData = () => {
+  originalInitializeDemoData();
+  initializeAuthDemoData();
+};
 
 // Error handling middleware
 app.use((err: any, req: Request, res: Response, next: NextFunction) => {
   console.error('Unhandled error:', err);
-  res.status(500).json({ 
+  res.status(500).json({
     message: 'Internal server error',
     error: process.env.NODE_ENV === 'development' ? err.message : undefined
   });
@@ -667,19 +1017,22 @@ app.use('*', (req: Request, res: Response) => {
   res.status(404).json({ message: 'Route not found' });
 });
 
-// Database connection and server startup
+// Initialize demo data and start server
 const startServer = async () => {
   try {
-    // Connect to MongoDB
-    await mongoose.connect(MONGODB_URI);
-    console.log('Connected to MongoDB');
+    // Initialize demo data
+    initializeDemoData();
 
     // Start server
     server.listen(PORT, () => {
       console.log(`🚀 Fleet Management Server running on port ${PORT}`);
       console.log(`📍 Socket.IO server ready for real-time tracking`);
-      console.log(`🗄️  Database connected to ${MONGODB_URI}`);
+      console.log(`🗄️  Running in DEMO mode (in-memory storage)`);
       console.log(`🌐 CORS enabled for ${process.env.CLIENT_URL || "http://localhost:5173"}`);
+      console.log(`📋 Demo accounts available:`);
+      console.log(`   Admin: admin@fleet.com / admin123`);
+      console.log(`   Driver: driver@fleet.com / driver123`);
+      console.log(`   Customer: customer@fleet.com / customer123`);
     });
   } catch (error) {
     console.error('Failed to start server:', error);
@@ -691,7 +1044,6 @@ const startServer = async () => {
 process.on('SIGTERM', async () => {
   console.log('SIGTERM received, shutting down gracefully');
   server.close(() => {
-    mongoose.connection.close();
     process.exit(0);
   });
 });
@@ -699,7 +1051,6 @@ process.on('SIGTERM', async () => {
 process.on('SIGINT', async () => {
   console.log('SIGINT received, shutting down gracefully');
   server.close(() => {
-    mongoose.connection.close();
     process.exit(0);
   });
 });

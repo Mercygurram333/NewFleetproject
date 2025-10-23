@@ -29,6 +29,13 @@ interface AdminState {
   markDeliveryArrived: (deliveryId: string, driverId: string) => void
   completeDelivery: (deliveryId: string, driverId: string, completionNotes?: string) => void
   
+  // Data fetching actions
+  initializeData: () => Promise<void>
+  fetchDeliveries: () => Promise<void>
+  fetchDrivers: () => Promise<void>
+  isLoading: boolean
+  error: string | null
+  
   // Scheduling validation functions
   checkDriverAvailability: (driverId: string, scheduledTime: string, deliveryId?: string) => {
     available: boolean
@@ -52,9 +59,6 @@ interface AdminState {
     valid: boolean
     errors: string[]
   }
-  
-  // Initialize data
-  initializeData: () => void
   
   // Utility functions
   getAvailableVehicles: () => Vehicle[]
@@ -633,7 +637,7 @@ export const useAdminStore = create<AdminState>()(
   },
   
   // Initialize with sample data if empty
-  initializeData: () => {
+  initializeData: async () => {
     const { vehicles, drivers, deliveries } = get()
     if (vehicles.length === 0 && drivers.length === 0 && deliveries.length === 0) {
       set({
@@ -643,6 +647,55 @@ export const useAdminStore = create<AdminState>()(
       })
     }
   },
+
+  // API data fetching functions
+  fetchDeliveries: async () => {
+    set({ isLoading: true, error: null })
+    try {
+      const response = await fetch('http://localhost:3001/api/deliveries')
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      const data = await response.json()
+      if (data.success) {
+        set({ deliveries: data.data, isLoading: false })
+      } else {
+        throw new Error(data.message || 'Failed to fetch deliveries')
+      }
+    } catch (error) {
+      console.error('Error fetching deliveries:', error)
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch deliveries',
+        isLoading: false
+      })
+    }
+  },
+
+  fetchDrivers: async () => {
+    set({ isLoading: true, error: null })
+    try {
+      const response = await fetch('http://localhost:3001/api/drivers')
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`)
+      }
+      const data = await response.json()
+      if (data.success) {
+        set({ drivers: data.data, isLoading: false })
+      } else {
+        throw new Error(data.message || 'Failed to fetch drivers')
+      }
+    } catch (error) {
+      console.error('Error fetching drivers:', error)
+      set({
+        error: error instanceof Error ? error.message : 'Failed to fetch drivers',
+        isLoading: false
+      })
+    }
+  },
+
+  // State for loading and errors
+  isLoading: false,
+  error: null,
 
   // Utility functions
   getAvailableVehicles: () => {

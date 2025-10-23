@@ -1,0 +1,104 @@
+================================================================================
+                    FLEET MANAGEMENT APPLICATION
+                         HOW TO START
+================================================================================
+
+CURRENT STATUS:
+---------------
+✅ Frontend: ALREADY RUNNING on http://localhost:5177
+⚠️  Backend:  NEEDS TO BE STARTED on port 3001
+
+================================================================================
+
+STEP 1: START THE BACKEND SERVER
+---------------------------------
+
+EASIEST METHOD:
+1. Go to folder: C:\Users\Mercy\OneDrive\Documents\Desktop\New-fleet-project
+2. Find file: START_BACKEND_SIMPLE.bat
+3. Double-click it
+4. A green command window will open
+5. Wait for message: "Authentication server running on port 3001"
+6. KEEP THIS WINDOW OPEN!
+
+ALTERNATIVE METHOD (Command Prompt):
+1. Press Windows Key + R
+2. Type: cmd
+3. Press Enter
+4. Copy this command:
+   cd C:\Users\Mercy\OneDrive\Documents\Desktop\New-fleet-project\backend
+5. Press Enter
+6. Copy this command:
+   node simple-auth-server.js
+7. Press Enter
+8. KEEP THIS WINDOW OPEN!
+
+================================================================================
+
+STEP 2: VERIFY BACKEND IS RUNNING
+----------------------------------
+
+You should see this in the command window:
+✓ Authentication server running on port 3001
+✓ Socket.IO server initialized
+✓ CORS enabled for frontend
+
+Test in browser:
+Open: http://localhost:3001/api/health
+Should show: {"status":"ok","message":"Server is running"}
+
+================================================================================
+
+STEP 3: USE THE APPLICATION
+----------------------------
+
+Open browser: http://localhost:5177
+
+LOGIN CREDENTIALS:
+------------------
+Admin:    admin@fleet.com    / admin123
+Driver:   driver@fleet.com   / driver123
+Customer: customer@fleet.com / customer123
+
+================================================================================
+
+TROUBLESHOOTING:
+----------------
+
+Problem: "Unable to connect to server" error
+Solution: Backend is not running - follow STEP 1 above
+
+Problem: "Port 3001 is already in use"
+Solution: Close any existing backend windows and try again
+
+Problem: "Cannot find module"
+Solution: Open command prompt and run:
+   cd C:\Users\Mercy\OneDrive\Documents\Desktop\New-fleet-project\backend
+   npm install
+
+================================================================================
+
+IMPORTANT REMINDERS:
+--------------------
+1. Keep the backend command window OPEN while using the app
+2. Don't close it or the app will stop working
+3. Frontend is already running - no need to start it
+4. Both servers must be running for the app to work
+
+================================================================================
+
+QUICK CHECKLIST:
+----------------
+[ ] Backend window is open and running
+[ ] Backend shows "running on port 3001"
+[ ] Browser can access http://localhost:5177
+[ ] No connection error on login page
+[ ] Can login successfully
+
+================================================================================
+
+Need help? Check these files:
+- QUICK_START.md (detailed guide)
+- README_STARTUP.md (full documentation)
+
+================================================================================

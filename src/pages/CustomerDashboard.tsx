@@ -11,9 +11,10 @@ import UniversalMap from '../components/maps/UniversalMap'
 import DeliveryRequestForm from '../components/customer/DeliveryRequestForm'
 import DeliveryProgressTracker from '../components/customer/DeliveryProgressTracker'
 import CustomerDeliveryTrackingMap from '../components/CustomerDeliveryTrackingMap'
+import Profile from '../components/driver/Profile'
 import type { Delivery } from '../types'
 
-type TabType = 'overview' | 'requests' | 'tracking' | 'history' | 'notifications'
+type TabType = 'overview' | 'requests' | 'tracking' | 'history' | 'notifications' | 'profile'
 
 // Enhanced Delivery Card Component for Customer
 const EnhancedDeliveryCard: React.FC<{
@@ -155,10 +156,26 @@ const CustomerDashboard: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>('all')
   const [showNewRequestForm, setShowNewRequestForm] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
+  // Tab change handling from sidebar profile button
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const tabParam = urlParams.get('tab')
+    if (tabParam && ['profile'].includes(tabParam)) {
+      setActiveTab(tabParam as TabType)
+    }
 
-  console.log('CustomerDashboard - User:', user)
-  console.log('CustomerDashboard - Deliveries:', deliveries)
-  console.log('CustomerDashboard - IsLoading:', isLoading)
+    const handleTabChange = (event: CustomEvent) => {
+      if (event.detail && ['profile'].includes(event.detail)) {
+        setActiveTab(event.detail as TabType)
+      }
+    }
+
+    window.addEventListener('dashboardTabChange', handleTabChange as EventListener)
+    
+    return () => {
+      window.removeEventListener('dashboardTabChange', handleTabChange as EventListener)
+    }
+  }, [])
 
   // Add loading state management
   useEffect(() => {
@@ -323,11 +340,56 @@ const CustomerDashboard: React.FC = () => {
     { id: 'requests' as TabType, label: 'My Requests', icon: Package, badge: customerDeliveries.length },
     { id: 'tracking' as TabType, label: 'Live Tracking', icon: MapPin, badge: activeDeliveries.length },
     { id: 'history' as TabType, label: 'History', icon: History },
-    { id: 'notifications' as TabType, label: 'Notifications', icon: Bell, badge: unreadNotifications }
+    { id: 'notifications' as TabType, label: 'Notifications', icon: Bell, badge: unreadNotifications },
+    { id: 'profile' as TabType, label: 'Profile', icon: Settings }
   ]
 
   const renderTabContent = () => {
     switch (activeTab) {
+      case 'overview':
+        return (
+          <div className="space-y-6">
+            {/* Customer Overview Dashboard */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-blue-100 rounded-lg">
+                    <Package className="h-6 w-6 text-blue-600" />
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-blue-600">{customerDeliveries.length}</p>
+                    <p className="text-sm text-gray-500">Total Requests</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-green-100 rounded-lg">
+                    <CheckCircle className="h-6 w-6 text-green-600" />
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-green-600">{completedDeliveries.length}</p>
+                    <p className="text-sm text-gray-500">Completed</p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="p-3 bg-orange-100 rounded-lg">
+                    <Clock className="h-6 w-6 text-orange-600" />
+                  </div>
+                  <div className="text-right">
+                    <p className="text-2xl font-bold text-orange-600">{activeDeliveries.length}</p>
+                    <p className="text-sm text-gray-500">Active</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+
       case 'requests':
         return (
           <div className="space-y-6">
@@ -719,179 +781,50 @@ const CustomerDashboard: React.FC = () => {
             )}
           </div>
         )
-      
-      default: // overview
+
+      case 'tracking':
         return (
-          <div className="space-y-8">
-            {/* Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <div className="stats-card animate-bounce-in bg-gradient-to-br from-blue-50 to-indigo-50 border-l-4 border-blue-500">
-                <div className="flex items-center justify-between mb-4">
-                  <div className="stats-icon bg-blue-500">
-                    <Calendar className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="stats-change positive">Total</div>
+          <div className="space-y-6">
+            {/* Live Tracking Content */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <MapPin className="h-5 w-5 mr-2 text-blue-600" />
+                Live Tracking
+              </h3>
+              <p className="text-gray-600">Live tracking content for customer deliveries...</p>
+              {activeDeliveries.length > 0 && (
+                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
+                  <p className="text-sm text-blue-800">{activeDeliveries.length} active deliveries being tracked</p>
                 </div>
-                <div className="stats-value text-blue-700">{customerDeliveries.length}</div>
-                <div className="stats-label text-blue-600">Total Orders</div>
-              </div>
-              <div className="stats-card animate-bounce-in bg-gradient-to-br from-yellow-50 to-amber-50 border-l-4 border-yellow-500" style={{ animationDelay: '0.1s' }}>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="stats-icon bg-yellow-500">
-                    <Clock className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="live-indicator text-yellow-500">
-                    <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-                  </div>
-                </div>
-                <div className="stats-value text-yellow-700">{activeDeliveries.length}</div>
-                <div className="stats-label text-yellow-600">In Transit</div>
-              </div>
-              <div className="stats-card animate-bounce-in bg-gradient-to-br from-green-50 to-emerald-50 border-l-4 border-green-500" style={{ animationDelay: '0.2s' }}>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="stats-icon bg-green-500">
-                    <CheckCircle className="h-6 w-6 text-white" />
-                  </div>
-                  <div className="stats-change positive">+{completedDeliveries.length > 0 ? Math.round((completedDeliveries.length / customerDeliveries.length) * 100) : 0}%</div>
-                </div>
-                <div className="stats-value text-green-700">{completedDeliveries.length}</div>
-                <div className="stats-label text-green-600">Delivered</div>
-              </div>
-              <div className="stats-card animate-bounce-in bg-gradient-to-br from-purple-50 to-violet-50 border-l-4 border-purple-500" style={{ animationDelay: '0.3s' }}>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="stats-icon bg-purple-500">
-                    <MapPin className="h-5 w-5 text-white" />
-                  </div>
-                  <div className="live-indicator text-purple-500">
-                    <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
-                  </div>
-                </div>
-                <div className="stats-value text-purple-700">{activeDeliveries.length}</div>
-                <div className="stats-label text-purple-600">Live Tracking</div>
-              </div>
+              )}
             </div>
-
-            {/* Quick Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div className="card-elevated p-6 animate-slide-up">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Plus className="h-5 w-5 text-blue-600 mr-2" />
-                  Quick Actions
-                </h3>
-                <div className="space-y-3">
-                  <button
-                    onClick={() => setShowNewRequestForm(true)}
-                    className="btn-gradient w-full h-12 text-base font-medium flex items-center justify-center space-x-2"
-                  >
-                    <Plus className="h-5 w-5" />
-                    <span>Create New Delivery Request</span>
-                  </button>
-                  <button
-                    onClick={() => setActiveTab('tracking')}
-                    className="w-full h-12 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-all duration-200 flex items-center justify-center space-x-2"
-                  >
-                    <MapPin className="h-5 w-5" />
-                    <span>Track Active Deliveries</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="card-elevated p-6 animate-slide-up" style={{ animationDelay: '0.1s' }}>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
-                  <Star className="h-5 w-5 text-yellow-600 mr-2" />
-                  Service Summary
-                </h3>
-                <div className="space-y-3 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Total Deliveries:</span>
-                    <span className="font-medium text-gray-900">{customerDeliveries.length}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Success Rate:</span>
-                    <span className="font-medium text-green-600">
-                      {customerDeliveries.length > 0 ? Math.round((completedDeliveries.length / customerDeliveries.length) * 100) : 0}%
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Active Orders:</span>
-                    <span className="font-medium text-blue-600">{activeDeliveries.length}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Active Deliveries */}
-            {activeDeliveries.length > 0 && (
-              <div className="card-elevated animate-slide-up">
-                <div className="px-6 py-4 bg-gradient-to-r from-blue-50 to-cyan-50 border-b border-blue-200">
-                  <h3 className="text-xl font-bold text-blue-900 flex items-center">
-                    <div className="w-2 h-8 bg-gradient-to-b from-blue-500 to-cyan-500 rounded-full mr-3"></div>
-                    Active Deliveries
-                    <span className="ml-auto bg-blue-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                      {activeDeliveries.length}
-                    </span>
-                  </h3>
-                </div>
-                <div className="p-6 space-y-4">
-                  {activeDeliveries.map(delivery => (
-                    <EnhancedDeliveryCard
-                      key={delivery.id}
-                      delivery={delivery}
-                      onTrackDelivery={setSelectedDelivery}
-                      onViewDetails={() => setSelectedDelivery(delivery)}
-                      liveUpdate={liveLocationUpdates[delivery.id]}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Recent Deliveries */}
-            {completedDeliveries.length > 0 && (
-              <div className="card-elevated animate-slide-up">
-                <div className="px-6 py-4 bg-gradient-to-r from-green-50 to-emerald-50 border-b border-green-200">
-                  <h3 className="text-xl font-bold text-green-900 flex items-center">
-                    <div className="w-2 h-8 bg-gradient-to-b from-green-500 to-emerald-500 rounded-full mr-3"></div>
-                    Recent Deliveries
-                    <span className="ml-auto bg-green-500 text-white px-3 py-1 rounded-full text-sm font-medium">
-                      {completedDeliveries.length}
-                    </span>
-                  </h3>
-                </div>
-                <div className="p-6 space-y-4">
-                  {completedDeliveries.slice(0, 5).map(delivery => (
-                    <EnhancedDeliveryCard
-                      key={delivery.id}
-                      delivery={delivery}
-                      onTrackDelivery={setSelectedDelivery}
-                      onViewDetails={() => setSelectedDelivery(delivery)}
-                      liveUpdate={liveLocationUpdates[delivery.id]}
-                    />
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Empty State */}
-            {customerDeliveries.length === 0 && (
-              <div className="card-elevated p-12 text-center animate-fade-in">
-                <div className="w-24 h-24 bg-gradient-to-br from-blue-100 to-indigo-200 rounded-full flex items-center justify-center mx-auto mb-6">
-                  <Package className="h-12 w-12 text-blue-500" />
-                </div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-3">Welcome to Fleet Management</h3>
-                <p className="text-gray-600 text-lg max-w-md mx-auto leading-relaxed mb-6">
-                  You haven't created any delivery requests yet. Get started by creating your first delivery request.
-                </p>
-                <button
-                  onClick={() => setShowNewRequestForm(true)}
-                  className="btn-gradient px-8 py-3 text-base font-medium"
-                >
-                  Create Your First Request
-                </button>
-              </div>
-            )}
           </div>
         )
+
+      case 'history':
+        return (
+          <div className="space-y-6">
+            {/* History Content */}
+            <div className="bg-white rounded-xl shadow-sm p-6 border border-gray-100">
+              <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center">
+                <History className="h-5 w-5 mr-2 text-green-600" />
+                Delivery History
+              </h3>
+              <p className="text-gray-600">View your completed delivery history...</p>
+              <div className="mt-4 text-center text-gray-500">
+                <p>Completed deliveries: {completedDeliveries.length}</p>
+              </div>
+            </div>
+          </div>
+        )
+
+      case 'profile':
+        return (
+          <Profile />
+        )
+
+      default:
+        return null
     }
   }
 

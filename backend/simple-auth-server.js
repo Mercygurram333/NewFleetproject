@@ -438,14 +438,407 @@ try {
   console.log('Vehicle tracking routes not found, skipping...');
 }
 
-// Socket.IO connection handling
+// In-memory storage for real-time tracking
+const driverLocations = new Map(); // Store driver locations
+const deliveryLocations = new Map(); // Store delivery-specific locations
+const activeDeliveries = new Map(); // Track active deliveries
+
+// Socket.IO connection handling with comprehensive real-time tracking
 io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
+  console.log('✅ Client connected:', socket.id);
   
+  // Send current driver locations to newly connected client
+  socket.emit('initial-driver-locations', Array.from(driverLocations.values()));
+  
+  // Handle driver location updates
+  socket.on('driver-location-update', (data) => {
+    const { driverId, lat, lng, timestamp, heading, speed, accuracy } = data;
+    
+    // Validate location data
+    if (!driverId || lat === undefined || lng === undefined) {
+      console.error('❌ Invalid location data received:', data);
+      return;
+    }
+    
+    const locationData = {
+      driverId,
+      lat: parseFloat(lat),
+      lng: parseFloat(lng),
+      timestamp: timestamp || new Date().toISOString(),
+      heading: heading || 0,
+      speed: speed || 0,
+      accuracy: accuracy || 0,
+      socketId: socket.id
+    };
+    
+    // Store driver location
+    driverLocations.set(driverId, locationData);
+    
+    // Broadcast to all clients except sender
+    socket.broadcast.emit('location-update', locationData);
+    
+    // Also emit to sender for confirmation
+    socket.emit('location-update-confirmed', locationData);
+    
+    console.log(`📍 Driver ${driverId} location updated: [${lat}, ${lng}]`);
+    
+    // Update delivery-specific location if driver has active delivery
+    const activeDelivery = Array.from(activeDeliveries.values())
+      .find(d => d.driverId === driverId);
+    
+    if (activeDelivery) {
+      const deliveryLocationData = {
+        deliveryId: activeDelivery.deliveryId,
+        driverId,
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        timestamp: timestamp || new Date().toISOString(),
+        status: activeDelivery.status,
+        heading,
+        speed,
+        accuracy
+      };
+      
+      deliveryLocations.set(activeDelivery.deliveryId, deliveryLocationData);
+      
+      // Broadcast delivery-specific location update
+      io.emit('delivery-live-location', deliveryLocationData);
+      
+      console.log(`🚚 Delivery ${activeDelivery.deliveryId} location updated`);
+    }
+  });
+  
+  // Handle delivery status updates
+  socket.on('delivery-status-update', (data) => {
+    const { deliveryId, driverId, status, location, timestamp } = data;
+    
+    console.log(`📦 Delivery ${deliveryId} status updated to: ${status}`);
+    
+    // Update active deliveries tracking
+    if (['started', 'in-transit', 'arrived'].includes(status)) {
+      activeDeliveries.set(deliveryId, {
+        deliveryId,
+        driverId,
+        status,
+        startedAt: timestamp || new Date().toISOString()
+      });
+    } else if (['delivered', 'cancelled'].includes(status)) {
+      activeDeliveries.delete(deliveryId);
+      deliveryLocations.delete(deliveryId);
+    }
+    
+    // Broadcast status change to all clients
+    io.emit('delivery-status-changed', {
+      deliveryId,
+      driverId,
+      status,
+      location,
+      timestamp: timestamp || new Date().toISOString()
+    });
+  });
+  
+  // Handle delivery location updates (specific to a delivery)
+  socket.on('delivery-location-update', (data) => {
+    const { deliveryId, driverId, location, timestamp, status } = data;
+    
+    const deliveryLocationData = {
+      deliveryId,
+      driverId,
+      lat: location.lat,
+      lng: location.lng,
+      timestamp: timestamp || new Date().toISOString(),
+      status: status || 'in-transit'
+    };
+    
+    deliveryLocations.set(deliveryId, deliveryLocationData);
+    
+    // Broadcast to all clients
+    io.emit('delivery-live-location', deliveryLocationData);
+    
+    console.log(`🚚 Delivery ${deliveryId} location: [${location.lat}, ${location.lng}]`);
+  });
+  
+  // Handle driver active location (continuous tracking)
+  socket.on('driver-active-location', (data) => {
+    const { driverId, location, timestamp } = data;
+    
+    // Update driver location
+    const locationData = {
+      driverId,
+      lat: location.lat,
+      lng: location.lng,
+      timestamp: timestamp || new Date().toISOString(),
+      socketId: socket.id
+    };
+    
+    driverLocations.set(driverId, locationData);
+    
+    // Broadcast to all clients
+    socket.broadcast.emit('location-update', locationData);
+  });
+  
+  // Handle request for all driver locations
+  socket.on('request-driver-locations', () => {
+    socket.emit('all-driver-locations', Array.from(driverLocations.values()));
+  });
+  
+  // Handle request for specific delivery location
+  socket.on('request-delivery-location', (deliveryId) => {
+    const location = deliveryLocations.get(deliveryId);
+    if (location) {
+      socket.emit('delivery-location-response', location);
+    }
+  });
+  
+  // Handle driver going online/offline
+  socket.on('driver-status-change', (data) => {
+    const { driverId, status } = data;
+    console.log(`👤 Driver ${driverId} status changed to: ${status}`);
+    
+    if (status === 'offline') {
+      driverLocations.delete(driverId);
+    }
+    
+    io.emit('driver-status-changed', { driverId, status });
+  });
+  
+  // Handle disconnect
   socket.on('disconnect', () => {
-    console.log('Client disconnected:', socket.id);
+    console.log('❌ Client disconnected:', socket.id);
+    
+    // Clean up driver location if this was a driver's socket
+    for (const [driverId, location] of driverLocations.entries()) {
+      if (location.socketId === socket.id) {
+        console.log(`🔌 Driver ${driverId} disconnected, removing location`);
+        // Don't delete immediately, keep last known location
+        // driverLocations.delete(driverId);
+      }
+    }
+  });
+  
+  // Heartbeat to keep connection alive
+  socket.on('ping', () => {
+    socket.emit('pong');
   });
 });
+
+// API Routes for Data Persistence
+
+// Get all deliveries
+app.get('/api/deliveries', (req, res) => {
+  try {
+    const deliveries = Array.from(deliveriesData.values());
+    res.json({
+      success: true,
+      data: deliveries,
+      count: deliveries.length
+    });
+  } catch (error) {
+    console.error('Error fetching deliveries:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch deliveries'
+    });
+  }
+});
+
+// Get deliveries for a specific customer
+app.get('/api/deliveries/customer/:email', (req, res) => {
+  try {
+    const customerEmail = req.params.email;
+    const customerDeliveries = Array.from(deliveriesData.values()).filter(
+      delivery => delivery.customer.email === customerEmail
+    );
+    res.json({
+      success: true,
+      data: customerDeliveries
+    });
+  } catch (error) {
+    console.error('Error fetching customer deliveries:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch customer deliveries'
+    });
+  }
+});
+
+// Get deliveries for a specific driver
+app.get('/api/deliveries/driver/:driverId', (req, res) => {
+  try {
+    const driverId = req.params.driverId;
+    const driverDeliveries = Array.from(deliveriesData.values()).filter(
+      delivery => delivery.driverId === driverId
+    );
+    res.json({
+      success: true,
+      data: driverDeliveries
+    });
+  } catch (error) {
+    console.error('Error fetching driver deliveries:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch driver deliveries'
+    });
+  }
+});
+
+// Update delivery status
+app.put('/api/deliveries/:id/status', (req, res) => {
+  try {
+    const deliveryId = req.params.id;
+    const { status, driverId, location } = req.body;
+    
+    if (deliveriesData.has(deliveryId)) {
+      const delivery = deliveriesData.get(deliveryId);
+      delivery.status = status;
+      delivery.updatedAt = new Date().toISOString();
+      
+      if (driverId) delivery.driverId = driverId;
+      if (location) delivery.currentLocation = location;
+      
+      res.json({
+        success: true,
+        data: delivery
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Delivery not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating delivery:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update delivery'
+    });
+  }
+});
+
+// Get all drivers
+app.get('/api/drivers', (req, res) => {
+  try {
+    const drivers = Array.from(driversData.values());
+    res.json({
+      success: true,
+      data: drivers
+    });
+  } catch (error) {
+    console.error('Error fetching drivers:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch drivers'
+    });
+  }
+});
+
+// Update driver profile
+app.put('/api/drivers/:id', (req, res) => {
+  try {
+    const driverId = req.params.id;
+    const updateData = req.body;
+    
+    if (driversData.has(driverId)) {
+      const driver = driversData.get(driverId);
+      Object.assign(driver, updateData, { updatedAt: new Date().toISOString() });
+      res.json({
+        success: true,
+        data: driver
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'Driver not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating driver:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update driver'
+    });
+  }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({
+    success: true,
+    message: 'Fleet Management API is running',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+// Get user profile
+app.get('/api/profile/:email', (req, res) => {
+  try {
+    const email = req.params.email;
+    const user = users.find(u => u.email === email);
+    
+    if (user) {
+      const { password, ...userProfile } = user;
+      res.json({
+        success: true,
+        data: userProfile
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error fetching user profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch user profile'
+    });
+  }
+});
+
+// Update user profile
+app.put('/api/profile/:email', (req, res) => {
+  try {
+    const email = req.params.email;
+    const updateData = req.body;
+    
+    const userIndex = users.findIndex(u => u.email === email);
+    if (userIndex !== -1) {
+      users[userIndex] = { ...users[userIndex], ...updateData, updatedAt: new Date().toISOString() };
+      const { password, ...userProfile } = users[userIndex];
+      res.json({
+        success: true,
+        data: userProfile
+      });
+    } else {
+      res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating user profile:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to update user profile'
+    });
+  }
+});
+
+// Periodic cleanup of stale locations (older than 5 minutes)
+setInterval(() => {
+  const now = new Date().getTime();
+  const staleThreshold = 5 * 60 * 1000; // 5 minutes
+  
+  for (const [driverId, location] of driverLocations.entries()) {
+    const locationTime = new Date(location.timestamp).getTime();
+    if (now - locationTime > staleThreshold) {
+      console.log(`🧹 Removing stale location for driver ${driverId}`);
+      driverLocations.delete(driverId);
+    }
+  }
+}, 60000); // Run every minute
 
 // Error handling middleware
 app.use((err, req, res, next) => {

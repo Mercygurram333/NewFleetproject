@@ -198,19 +198,21 @@ export const useRealtimeStore = create<RealtimeState>()(
   },
 
   startLocationTracking: (driverId: string) => {
+    console.log(`🚀 Starting GPS tracking for driver ${driverId}`)
+    
     if (!navigator.geolocation) {
       console.error('Geolocation is not supported by this browser.')
-      // Use fallback location for demo
-      const fallbackLocation = { lat: 40.7128, lng: -74.0060 }
+      // Use fallback location (Hyderabad, India)
+      const fallbackLocation = { lat: 17.385044, lng: 78.486671 }
       get().setCurrentUserLocation(fallbackLocation)
       get().emitLocationUpdate(driverId, fallbackLocation)
       return
     }
 
     const options = {
-      enableHighAccuracy: true,
-      timeout: 10000,
-      maximumAge: 30000 // Cache location for 30 seconds
+      enableHighAccuracy: true, // Use GPS for accurate location
+      timeout: 15000, // Wait up to 15 seconds
+      maximumAge: 0 // Don't use cached location
     }
 
     // Get initial position
@@ -220,20 +222,27 @@ export const useRealtimeStore = create<RealtimeState>()(
           lat: position.coords.latitude,
           lng: position.coords.longitude
         }
+        console.log(`📍 Initial GPS location obtained: [${location.lat}, ${location.lng}]`)
+        console.log(`   Accuracy: ${position.coords.accuracy}m`)
+        
         get().setCurrentUserLocation(location)
         get().emitLocationUpdate(driverId, location)
       },
       (error) => {
-        console.warn('Initial location failed:', error.message)
-        // Use fallback location for demo
-        const fallbackLocation = { lat: 40.7128, lng: -74.0060 }
+        console.warn('❌ Initial GPS location failed:', error.message)
+        console.warn('   Error code:', error.code)
+        
+        // Use fallback location (Hyderabad, India)
+        const fallbackLocation = { lat: 17.385044, lng: 78.486671 }
+        console.log(`🔄 Using fallback location: [${fallbackLocation.lat}, ${fallbackLocation.lng}]`)
+        
         get().setCurrentUserLocation(fallbackLocation)
         get().emitLocationUpdate(driverId, fallbackLocation)
       },
       options
     )
 
-    // Watch position changes
+    // Watch position changes for continuous tracking
     watchId = navigator.geolocation.watchPosition(
       (position) => {
         const location = {
@@ -241,29 +250,48 @@ export const useRealtimeStore = create<RealtimeState>()(
           lng: position.coords.longitude
         }
         
-        get().setCurrentUserLocation(location)
-        get().emitLocationUpdate(driverId, location)
+        const accuracy = position.coords.accuracy
+        const speed = position.coords.speed || 0
+        const heading = position.coords.heading || 0
         
-        // Also emit delivery-specific location updates for active deliveries
-        // This will be handled by the backend to update customers in real-time
+        console.log(`📍 GPS Update: [${location.lat.toFixed(6)}, ${location.lng.toFixed(6)}]`)
+        console.log(`   Accuracy: ${accuracy.toFixed(2)}m | Speed: ${speed.toFixed(2)}m/s`)
+        
+        get().setCurrentUserLocation(location)
+        
+        // Emit location with additional GPS data
         const { socket } = get()
         if (socket && socket.connected) {
+          socket.emit('driver-location-update', {
+            driverId,
+            lat: location.lat,
+            lng: location.lng,
+            timestamp: new Date().toISOString(),
+            heading,
+            speed,
+            accuracy
+          })
+          
+          // Also emit driver-active-location for backward compatibility
           socket.emit('driver-active-location', {
             driverId,
             location,
-            timestamp: new Date().toISOString()
+            timestamp: new Date().toISOString(),
+            heading,
+            speed,
+            accuracy
           })
         }
-        
-        // Log for debugging
-        console.log('Location updated:', location)
       },
       (error) => {
-        console.warn('Location tracking error:', error.message)
+        console.warn('⚠️ GPS tracking error:', error.message)
+        console.warn('   Error code:', error.code)
+        
         // Continue with last known location or fallback
         const currentLocation = get().currentUserLocation
         if (!currentLocation) {
-          const fallbackLocation = { lat: 40.7128, lng: -74.0060 }
+          const fallbackLocation = { lat: 17.385044, lng: 78.486671 }
+          console.log(`🔄 Using fallback location after error`)
           get().setCurrentUserLocation(fallbackLocation)
           get().emitLocationUpdate(driverId, fallbackLocation)
         }

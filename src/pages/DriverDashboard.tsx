@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { 
   MapPin, Clock, CheckCircle, AlertCircle, Navigation, Truck, BarChart3, Bell, Filter, Calendar, Package,
   Play, Square, History, Award, Star, TrendingUp, Route, Timer, Target, Zap, Trophy, Medal,
-  ChevronRight, RefreshCw, Eye, Phone, MessageSquare, Flag, CheckCircle2, XCircle, Pause
+  ChevronRight, RefreshCw, Eye, Phone, MessageSquare, Flag, CheckCircle2, XCircle, Pause, User
 } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 import { useAdminStore } from '../store/adminStore'
@@ -11,9 +11,10 @@ import UniversalMap from '../components/maps/UniversalMap'
 import DriverAnalytics from '../components/driver/DriverAnalytics'
 import DeliveryCard from '../components/driver/DeliveryCard'
 import DeliveryTrackingMap from '../components/DeliveryTrackingMap'
+import Profile from '../components/driver/Profile'
 import type { Delivery } from '../types'
 
-type TabType = 'overview' | 'deliveries' | 'map' | 'history' | 'performance'
+type TabType = 'overview' | 'deliveries' | 'map' | 'history' | 'performance' | 'profile'
 
 // Enhanced Delivery Card Component
 const EnhancedDeliveryCard: React.FC<{
@@ -142,8 +143,34 @@ const DriverDashboard: React.FC = () => {
   const [activeDeliveryId, setActiveDeliveryId] = useState<string | null>(null)
   const [showNotifications, setShowNotifications] = useState(true)
 
+  // Tab change handling from sidebar profile button
+  useEffect(() => {
+    const urlParams = new URLSearchParams(window.location.search)
+    const tabParam = urlParams.get('tab')
+    if (tabParam && ['profile'].includes(tabParam)) {
+      setActiveTab(tabParam as TabType)
+    }
+
+    const handleTabChange = (event: CustomEvent) => {
+      if (event.detail && ['profile'].includes(event.detail)) {
+        setActiveTab(event.detail as TabType)
+      }
+    }
+
+    window.addEventListener('dashboardTabChange', handleTabChange as EventListener)
+    
+    return () => {
+      window.removeEventListener('dashboardTabChange', handleTabChange as EventListener)
+    }
+  }, [])
+
   // Get current driver
-  let currentDriver = drivers.find(d => d.email === user?.email)
+  const [currentDriver, setCurrentDriver] = React.useState<any>(null)
+  
+  React.useEffect(() => {
+    const driver = drivers.find(d => d.email === user?.email)
+    setCurrentDriver(driver)
+  }, [drivers, user?.email])
   
   // If driver not found, create one for the current user
   const { addDriver } = useAdminStore()
@@ -162,9 +189,6 @@ const DriverDashboard: React.FC = () => {
       addDriver(newDriver)
     }
   }, [user?.email, currentDriver, addDriver])
-  
-  // Re-fetch driver after potential creation
-  currentDriver = drivers.find(d => d.email === user?.email)
   
   const driverDeliveries = currentDriver ? getDriverDeliveries(currentDriver.id) : []
   const stats = currentDriver ? getDeliveryStats(currentDriver.id) : null
@@ -248,9 +272,26 @@ const DriverDashboard: React.FC = () => {
   const rejectedDeliveries = driverDeliveries.filter(d => d.status === 'rejected')
 
   useEffect(() => {
-    // Initialize data if empty
-    initializeData()
-  }, [initializeData])
+    // Check if URL has tab parameter
+    const urlParams = new URLSearchParams(window.location.search)
+    const tabParam = urlParams.get('tab')
+    if (tabParam && ['overview', 'deliveries', 'map', 'history', 'performance', 'profile'].includes(tabParam)) {
+      setActiveTab(tabParam as TabType)
+    }
+
+    // Listen for custom tab change events
+    const handleTabChange = (event: CustomEvent) => {
+      if (event.detail && ['overview', 'deliveries', 'map', 'history', 'performance', 'profile'].includes(event.detail)) {
+        setActiveTab(event.detail as TabType)
+      }
+    }
+
+    window.addEventListener('dashboardTabChange', handleTabChange as EventListener)
+
+    return () => {
+      window.removeEventListener('dashboardTabChange', handleTabChange as EventListener)
+    }
+  }, [])
 
   useEffect(() => {
     // Initialize socket connection
@@ -296,7 +337,8 @@ const DriverDashboard: React.FC = () => {
     { id: 'deliveries' as TabType, label: 'My Deliveries', icon: Truck, badge: pendingDeliveries.length },
     { id: 'map' as TabType, label: 'Live Tracking', icon: MapPin, badge: activeDelivery ? 1 : 0 },
     { id: 'history' as TabType, label: 'History', icon: History },
-    { id: 'performance' as TabType, label: 'Performance', icon: Award, badge: performance.badges.length }
+    { id: 'performance' as TabType, label: 'Performance', icon: Award, badge: performance.badges.length },
+    { id: 'profile' as TabType, label: 'Profile', icon: User }
   ]
 
   const statusOptions = [
@@ -310,7 +352,7 @@ const DriverDashboard: React.FC = () => {
     { value: 'rejected', label: 'Rejected', count: rejectedDeliveries.length }
   ]
 
-  const renderTabContent = () => {
+  const renderTabContent = (driver: any) => {
     switch (activeTab) {
       case 'overview':
         return (
@@ -822,7 +864,7 @@ const DriverDashboard: React.FC = () => {
                 </div>
                 <div className="text-center">
                   <div className="w-20 h-20 bg-gradient-to-br from-purple-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-3">
-                    <span className="text-lg font-bold text-white">{currentDriver?.rating.toFixed(1)}</span>
+                    <span className="text-lg font-bold text-white">{driver?.rating.toFixed(1)}</span>
                   </div>
                   <p className="font-medium text-gray-900">Customer Rating</p>
                   <p className="text-sm text-gray-500">Average rating</p>
@@ -907,106 +949,112 @@ const DriverDashboard: React.FC = () => {
           </div>
         )
         
+      case 'profile':
+        return (
+          <Profile />
+        )
+        
       default:
         return null
     }
   }
 
-  if (!currentDriver) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-center">
-          <AlertCircle className="h-16 w-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-gray-900 mb-2">Setting up your driver profile...</h3>
-          <p className="text-gray-600">Please wait while we initialize your account.</p>
-          <div className="mt-4">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
-        <div>
-          <h1 className="text-4xl font-bold text-gradient-blue">Driver Dashboard</h1>
-          <p className="text-xl text-gray-600 mt-2">Welcome back, {currentDriver.name}</p>
-          <div className="flex items-center space-x-4 mt-2">
-            <div className="flex items-center space-x-2 text-sm text-gray-600">
-              <Truck className="h-4 w-4" />
-              <span>Vehicle: {currentDriver.vehicleId ? `Assigned` : 'Not assigned'}</span>
-            </div>
-            <div className="flex items-center space-x-2 text-sm text-gray-600">
-              <CheckCircle className="h-4 w-4" />
-              <span>Rating: {currentDriver.rating.toFixed(1)}/5.0</span>
+      {/* Early return for loading state */}
+      {!currentDriver ? (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <AlertCircle className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-xl font-semibold text-gray-900 mb-2">Setting up your driver profile...</h3>
+            <p className="text-gray-600">Please wait while we initialize your account.</p>
+            <div className="mt-4">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
             </div>
           </div>
         </div>
-        <div className="flex items-center space-x-3">
-          <div className="bg-white/80 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg border border-gray-200">
-            <div className="flex items-center space-x-3">
-              <div className={`live-indicator ${isTracking ? 'text-green-500' : 'text-gray-400'}`}>
-                <Navigation className="h-6 w-6" />
-              </div>
-              <div>
-                <p className={`font-medium ${isTracking ? 'text-green-700' : 'text-gray-600'}`}>
-                  {isTracking ? 'Live Tracking Active' : 'Tracking Inactive'}
-                </p>
-                <p className="text-xs text-gray-500">
-                  {isTracking ? 'Location being shared' : 'Click to start tracking'}
-                </p>
-              </div>
-            </div>
-          </div>
-          {pendingDeliveries.length > 0 && (
-            <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
-              <div className="flex items-center space-x-2">
-                <Bell className="h-5 w-5 text-orange-600" />
-                <div>
-                  <p className="font-medium text-orange-800">{pendingDeliveries.length} New</p>
-                  <p className="text-xs text-orange-600">Pending deliveries</p>
+      ) : (
+        <>
+          {/* Header */}
+          <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center space-y-4 lg:space-y-0">
+            <div>
+              <h1 className="text-4xl font-bold text-gradient-blue">Driver Dashboard</h1>
+              <p className="text-xl text-gray-600 mt-2">Welcome back, {currentDriver?.name || 'Driver'}</p>
+              <div className="flex items-center space-x-4 mt-2">
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <Truck className="h-4 w-4" />
+                  <span>Vehicle: {currentDriver?.vehicleId ? `Assigned` : 'Not assigned'}</span>
+                </div>
+                <div className="flex items-center space-x-2 text-sm text-gray-600">
+                  <CheckCircle className="h-4 w-4" />
+                  <span>Rating: {currentDriver?.rating?.toFixed(1) || '5.0'}/5.0</span>
                 </div>
               </div>
             </div>
-          )}
-        </div>
-      </div>
+            <div className="flex items-center space-x-3">
+              <div className="bg-white/80 backdrop-blur-sm rounded-xl px-4 py-3 shadow-lg border border-gray-200">
+                <div className="flex items-center space-x-3">
+                  <div className={`live-indicator ${isTracking ? 'text-green-500' : 'text-gray-400'}`}>
+                    <Navigation className="h-6 w-6" />
+                  </div>
+                  <div>
+                    <p className={`font-medium ${isTracking ? 'text-green-700' : 'text-gray-600'}`}>
+                      {isTracking ? 'Live Tracking Active' : 'Tracking Inactive'}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {isTracking ? 'Location being shared' : 'Click to start tracking'}
+                    </p>
+                  </div>
+                </div>
+              </div>
+              {pendingDeliveries.length > 0 && (
+                <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-3">
+                  <div className="flex items-center space-x-2">
+                    <Bell className="h-5 w-5 text-orange-600" />
+                    <div>
+                      <p className="font-medium text-orange-800">{pendingDeliveries.length} New</p>
+                      <p className="text-xs text-orange-600">Pending deliveries</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
 
-      {/* Tab Navigation */}
-      <div className="card-elevated p-2">
-        <nav className="flex space-x-2">
-          {tabs.map((tab) => {
-            const Icon = tab.icon
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center space-x-3 py-3 px-6 rounded-xl font-semibold text-sm transition-all duration-200 transform hover:scale-105 relative ${
-                  activeTab === tab.id
-                    ? 'btn-gradient shadow-colored text-white'
-                    : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
-                }`}
-              >
-                <Icon className="h-5 w-5" />
-                <span>{tab.label}</span>
-                {tab.badge && tab.badge > 0 && (
-                  <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center animate-pulse">
-                    {tab.badge}
-                  </span>
-                )}
-              </button>
-            )
-          })}
-        </nav>
-      </div>
+          {/* Tab Navigation */}
+          <div className="card-elevated p-2">
+            <nav className="flex space-x-2">
+              {tabs.map((tab) => {
+                const Icon = tab.icon
+                return (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={`flex items-center space-x-3 py-3 px-6 rounded-xl font-semibold text-sm transition-all duration-200 transform hover:scale-105 relative ${
+                      activeTab === tab.id
+                        ? 'btn-gradient shadow-colored text-white'
+                        : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'
+                    }`}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span>{tab.label}</span>
+                    {tab.badge && tab.badge > 0 && (
+                      <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full h-5 w-5 flex items-center justify-center animate-pulse">
+                        {tab.badge}
+                      </span>
+                    )}
+                  </button>
+                )
+              })}
+            </nav>
+          </div>
 
-      {/* Tab Content */}
-      <div className="mt-6">
-        {renderTabContent()}
-      </div>
+          {/* Tab Content */}
+          <div className="mt-6">
+            {renderTabContent(currentDriver)}
+          </div>
+        </>
+      )}
     </div>
   )
 }

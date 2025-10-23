@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { Navigate, Link } from 'react-router-dom'
 import { User, Mail, Lock, UserCheck, Eye, EyeOff, Loader2, AlertCircle, CheckCircle, Phone } from 'lucide-react'
 import { useAuthStore, UserRole } from '../store/authStore'
@@ -10,12 +10,15 @@ const RegisterForm: React.FC = () => {
     password: '',
     confirmPassword: '',
     role: 'customer' as UserRole,
-    phone: ''
+    phone: '',
+    adminSecretCode: ''
   })
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({})
+  const [pasteAttempted, setPasteAttempted] = useState(false)
+  const confirmPasswordRef = useRef<HTMLInputElement>(null)
 
   const { 
     register, 
@@ -31,6 +34,36 @@ const RegisterForm: React.FC = () => {
     clearError()
   }, [clearError])
 
+  // Reset paste attempt when confirm password field is focused
+  useEffect(() => {
+    if (confirmPasswordRef.current) {
+      const handleFocus = () => setPasteAttempted(false)
+      confirmPasswordRef.current.addEventListener('focus', handleFocus)
+      return () => {
+        if (confirmPasswordRef.current) {
+          confirmPasswordRef.current.removeEventListener('focus', handleFocus)
+        }
+      }
+    }
+  }, [])
+
+  /**
+   * Prevent copy/paste in confirm password field
+   */
+  const handleConfirmPasswordPaste = (e: React.ClipboardEvent) => {
+    e.preventDefault()
+    setPasteAttempted(true)
+    setValidationErrors(prev => ({
+      ...prev,
+      confirmPassword: 'Please type your password manually for security'
+    }))
+  }
+
+  const handleConfirmPasswordCopy = (e: React.ClipboardEvent) => {
+    e.preventDefault()
+    setPasteAttempted(true)
+  }
+
   /**
    * Handle input changes and clear validation errors
    */
@@ -40,6 +73,17 @@ const RegisterForm: React.FC = () => {
     // Clear validation error for this field
     if (validationErrors[field]) {
       setValidationErrors(prev => ({ ...prev, [field]: '' }))
+    }
+    
+    // Clear paste attempt warning when user starts typing
+    if (field === 'confirmPassword' && pasteAttempted) {
+      setPasteAttempted(false)
+    }
+    
+    // Clear admin secret code when role changes to non-admin
+    if (field === 'role' && value !== 'admin') {
+      setFormData(prev => ({ ...prev, adminSecretCode: '' }))
+      setValidationErrors(prev => ({ ...prev, adminSecretCode: '' }))
     }
     
     // Clear global error
@@ -84,6 +128,19 @@ const RegisterForm: React.FC = () => {
       errors.confirmPassword = 'Please confirm your password'
     } else if (formData.password !== formData.confirmPassword) {
       errors.confirmPassword = 'Passwords do not match'
+    }
+
+    // Admin secret code validation (only if role is admin)
+    if (formData.role === 'admin') {
+      if (!formData.adminSecretCode) {
+        errors.adminSecretCode = 'Admin secret code is required'
+      } else {
+        // Get admin secret code from environment variable
+        const expectedCode = import.meta.env.VITE_ADMIN_SECRET_CODE || 'SECURE_ADMIN_2024_FLEET'
+        if (formData.adminSecretCode !== expectedCode) {
+          errors.adminSecretCode = 'Invalid admin secret code'
+        }
+      }
     }
 
     // Phone validation (optional)
@@ -136,7 +193,7 @@ const RegisterForm: React.FC = () => {
 
   // Redirect if already authenticated
   if (isAuthenticated && user) {
-    return <Navigate to={`/${user.role}`} replace />
+    return <Navigate to={`/dashboard/${user.role}`} replace />
   }
 
   return (
@@ -292,6 +349,7 @@ const RegisterForm: React.FC = () => {
             <div>
               <label htmlFor="confirmPassword" className="block text-sm font-semibold text-gray-700 mb-2">
                 Confirm Password
+                <span className="text-xs text-gray-500 ml-2">(type manually)</span>
               </label>
               <div className="relative">
                 <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
@@ -302,12 +360,17 @@ const RegisterForm: React.FC = () => {
                   name="confirmPassword"
                   type={showConfirmPassword ? 'text' : 'password'}
                   required
+                  ref={confirmPasswordRef}
                   value={formData.confirmPassword}
                   onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
+                  onPaste={handleConfirmPasswordPaste}
+                  onCopy={handleConfirmPasswordCopy}
                   className={`form-input-enhanced pl-14 pr-12 h-12 text-gray-900 placeholder-gray-400 shadow-sm ${
-                    validationErrors.confirmPassword ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''
+                    validationErrors.confirmPassword ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : 
+                    pasteAttempted ? 'border-yellow-300 focus:border-yellow-500 focus:ring-yellow-500' : ''
                   }`}
                   placeholder="Confirm your password"
+                  title="Copy and paste are disabled for security reasons"
                 />
                 <button
                   type="button"
@@ -325,6 +388,12 @@ const RegisterForm: React.FC = () => {
                 <p className="mt-1 text-sm text-red-600 flex items-center space-x-1">
                   <AlertCircle className="h-4 w-4" />
                   <span>{validationErrors.confirmPassword}</span>
+                </p>
+              )}
+              {pasteAttempted && !validationErrors.confirmPassword && (
+                <p className="mt-1 text-sm text-yellow-600 flex items-center space-x-1">
+                  <AlertCircle className="h-4 w-4" />
+                  <span>Please type your password manually for security reasons</span>
                 </p>
               )}
             </div>
@@ -351,6 +420,38 @@ const RegisterForm: React.FC = () => {
                 </select>
               </div>
             </div>
+
+            {/* Admin Secret Code Field (only shown for admin role) */}
+            {formData.role === 'admin' && (
+              <div>
+                <label htmlFor="adminSecretCode" className="block text-sm font-semibold text-gray-700 mb-2">
+                  Admin Secret Code *
+                </label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-gray-400" />
+                  </div>
+                  <input
+                    id="adminSecretCode"
+                    name="adminSecretCode"
+                    type="password"
+                    required={formData.role === 'admin'}
+                    value={formData.adminSecretCode}
+                    onChange={(e) => handleInputChange('adminSecretCode', e.target.value)}
+                    className={`form-input-enhanced pl-14 h-12 text-gray-900 placeholder-gray-400 shadow-sm ${
+                      validationErrors.adminSecretCode ? 'border-red-300 focus:border-red-500 focus:ring-red-500' : ''
+                    }`}
+                    placeholder="Enter admin secret code"
+                  />
+                </div>
+                {validationErrors.adminSecretCode && (
+                  <p className="mt-1 text-sm text-red-600 flex items-center space-x-1">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>{validationErrors.adminSecretCode}</span>
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
           {/* Error Message */}

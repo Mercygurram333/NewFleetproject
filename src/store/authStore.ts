@@ -28,9 +28,8 @@ interface AuthState {
   logout: () => void
   forgotPassword: (email: string) => Promise<boolean>
   resetPassword: (token: string, password: string) => Promise<boolean>
-  verifyToken: () => Promise<boolean>
-  clearError: () => void
-  setLoading: (loading: boolean) => void
+  updateProfile: (name?: string, phone?: string) => Promise<boolean>
+  getProfile: () => Promise<any>
 }
 
 // API Base URL
@@ -320,6 +319,94 @@ export const useAuthStore = create<AuthState>()(
        */
       setLoading: (loading: boolean) => {
         set({ isLoading: loading })
+      },
+
+      /**
+       * Update user profile
+       * @param name - New name (optional)
+       * @param phone - New phone number (optional)
+       */
+      updateProfile: async (name?: string, phone?: string) => {
+        const { user } = get()
+        if (!user) return false
+
+        set({ isLoading: true, error: null })
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/profile/${user.email}`, {
+            method: 'PUT',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ name, phone })
+          })
+
+          if (!response.ok) {
+            const errorData = await response.json().catch(() => ({ message: 'Network error' }))
+            throw new Error(errorData.message || `HTTP error! status: ${response.status}`)
+          }
+
+          const data = await response.json()
+          if (data.success) {
+            set({
+              user: { ...user, name: name || user.name, phone: phone || user.phone },
+              isLoading: false
+            })
+            return true
+          } else {
+            throw new Error(data.message || 'Failed to update profile')
+          }
+        } catch (error) {
+          console.error('Profile update error:', error)
+          set({
+            error: error instanceof Error ? error.message : 'Failed to update profile',
+            isLoading: false
+          })
+          return false
+        }
+      },
+
+      /**
+       * Get user profile from backend
+       */
+      getProfile: async () => {
+        const { user } = get()
+        if (!user) return null
+
+        set({ isLoading: true, error: null })
+
+        try {
+          const response = await fetch(`${API_BASE_URL}/profile/${user.email}`)
+
+          if (!response.ok) {
+            if (response.status === 404) {
+              // Profile not found in backend, return current user data
+              set({ isLoading: false })
+              return { ...user, phone: user.phone || '' }
+            }
+            const errorData = await response.json().catch(() => ({ message: 'Network error' }))
+            throw new Error(errorData.message || `HTTP error! status: ${response.status}`)
+          }
+
+          const data = await response.json()
+          if (data.success) {
+            const profileData = { ...data.data, phone: data.data.phone || user.phone || '' }
+            set({
+              user: profileData,
+              isLoading: false
+            })
+            return profileData
+          } else {
+            throw new Error(data.message || 'Failed to fetch profile')
+          }
+        } catch (error) {
+          console.error('Profile fetch error:', error)
+          set({
+            error: error instanceof Error ? error.message : 'Failed to fetch profile',
+            isLoading: false
+          })
+          return { ...user, phone: user.phone || '' }
+        }
       }
     }),
     {

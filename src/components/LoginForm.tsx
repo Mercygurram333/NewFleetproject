@@ -38,7 +38,7 @@ const LoginForm: React.FC = () => {
 
   // Redirect if already authenticated
   if (isAuthenticated && user) {
-    return <Navigate to={`/${user.role}`} replace />
+    return <Navigate to={`/dashboard/${user.role}`} replace />
   }
 
   return (

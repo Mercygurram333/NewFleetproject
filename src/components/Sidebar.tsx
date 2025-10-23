@@ -1,6 +1,6 @@
 import React from 'react'
 import { NavLink } from 'react-router-dom'
-import { LayoutDashboard, Truck, Users, Settings } from 'lucide-react'
+import { LayoutDashboard, Truck, Users, Settings, User } from 'lucide-react'
 import { useAuthStore } from '../store/authStore'
 
 const Sidebar: React.FC = () => {
@@ -30,13 +30,13 @@ const Sidebar: React.FC = () => {
         return [
           ...baseItems,
           { to: '/driver/trips', icon: Truck, label: 'My Trips' },
-          { to: '/driver/profile', icon: Settings, label: 'Profile' },
+          { to: '#', icon: User, label: 'Profile' }, // Profile stays within dashboard
         ]
       case 'customer':
         return [
           ...baseItems,
           { to: '/customer/bookings', icon: Truck, label: 'My Bookings' },
-          { to: '/customer/profile', icon: Settings, label: 'Profile' },
+          { to: '#', icon: Settings, label: 'Profile' }, // Profile stays within dashboard
         ]
       default:
         return baseItems
@@ -44,6 +44,18 @@ const Sidebar: React.FC = () => {
   }
 
   const navItems = getNavItems()
+
+  const handleNavClick = (item: any, e: React.MouseEvent) => {
+    // Special handling for profile links in dashboard context
+    if (item.label === 'Profile' && window.location.pathname.includes('/dashboard')) {
+      e.preventDefault()
+      const currentPath = window.location.pathname
+      const newUrl = `${currentPath}?tab=profile`
+      window.history.pushState({}, '', newUrl)
+      // Trigger a custom event to update the dashboard tab
+      window.dispatchEvent(new CustomEvent('dashboardTabChange', { detail: 'profile' }))
+    }
+  }
 
   return (
     <aside className="w-64 bg-white/80 backdrop-blur-sm shadow-xl border-r border-gray-200/50 h-screen">
@@ -53,6 +65,7 @@ const Sidebar: React.FC = () => {
             <NavLink
               key={item.to}
               to={item.to}
+              onClick={(e) => handleNavClick(item, e)}
               className={({ isActive }) =>
                 `nav-item ${
                   isActive

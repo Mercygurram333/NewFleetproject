@@ -1,6 +1,7 @@
 import React from 'react'
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom'
 import { useAuthStore } from './store/authStore'
+import HomePage from './pages/HomePage'
 import LoginForm from './components/LoginForm'
 import RegisterForm from './components/RegisterForm'
 import ForgotPasswordForm from './components/ForgotPasswordForm'
@@ -17,7 +18,7 @@ const DashboardRedirect: React.FC = () => {
   const { user } = useAuthStore()
   
   if (user) {
-    return <Navigate to={`/${user.role}`} replace />
+    return <Navigate to={`/dashboard/${user.role}`} replace />
   }
   
   return <Navigate to="/login" replace />
@@ -31,6 +32,9 @@ const App: React.FC = () => {
   return (
     <Router>
       <Routes>
+        {/* Home Page - Public Route */}
+        <Route path="/" element={<HomePage />} />
+        
         {/* Public Authentication Routes */}
         <Route 
           path="/login" 
@@ -66,13 +70,13 @@ const App: React.FC = () => {
         />
         
         {/* Protected Routes */}
-        <Route path="/" element={
+        <Route path="/dashboard" element={
           <ProtectedRoute>
             <Layout />
           </ProtectedRoute>
         }>
           {/* Default redirect based on user role */}
-          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route index element={<DashboardRedirect />} />
           
           {/* Admin Routes */}
           <Route 
@@ -101,16 +105,6 @@ const App: React.FC = () => {
               <CustomerRoute>
                 <CustomerDashboard />
               </CustomerRoute>
-            } 
-          />
-          
-          {/* Generic dashboard route that redirects based on role */}
-          <Route 
-            path="dashboard" 
-            element={
-              <ProtectedRoute>
-                <DashboardRedirect />
-              </ProtectedRoute>
             } 
           />
         </Route>

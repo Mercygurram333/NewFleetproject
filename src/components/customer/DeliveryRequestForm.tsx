@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
-import { MapPin, Package, Clock, FileText, Weight, AlertCircle, CheckCircle } from 'lucide-react'
+import { MapPin, Package, Clock, FileText, Weight, AlertCircle, CheckCircle, Loader } from 'lucide-react'
 import { useAdminStore } from '../../store/adminStore'
 import { useAuthStore } from '../../store/authStore'
+import { geocodeAddress, validateCoordinates, calculateDistance } from '../../services/geocodingService'
 import type { Delivery } from '../../types'
 
 interface DeliveryRequestFormProps {
@@ -29,6 +30,11 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [isSubmitted, setIsSubmitted] = useState(false)
+  const [isGeocoding, setIsGeocoding] = useState(false)
+  const [geocodedPickup, setGeocodedPickup] = useState<{ lat: number; lng: number } | null>(null)
+  const [geocodedDelivery, setGeocodedDelivery] = useState<{ lat: number; lng: number } | null>(null)
+  const [geocodeWarnings, setGeocodeWarnings] = useState<{ pickup?: string; delivery?: string }>({})
+  const [estimatedDistance, setEstimatedDistance] = useState<number | null>(null)
 
   const validateForm = () => {
     const newErrors: Record<string, string> = {}
@@ -84,6 +90,58 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
     return Object.keys(newErrors).length === 0
   }
 
+  // Geocode addresses when user finishes typing
+  const handleAddressBlur = async (field: 'pickup' | 'delivery', address: string) => {
+    if (!address.trim()) return
+    
+    setIsGeocoding(true)
+    setGeocodeWarnings(prev => ({ ...prev, [field]: undefined }))
+    
+    try {
+      const result = await geocodeAddress(address)
+      
+      if (result.success) {
+        const coords = { lat: result.data.lat, lng: result.data.lng }
+        
+        if (field === 'pickup') {
+          setGeocodedPickup(coords)
+          console.log(`✅ Pickup geocoded: ${result.data.displayName} [${coords.lat}, ${coords.lng}]`)
+        } else {
+          setGeocodedDelivery(coords)
+          console.log(`✅ Delivery geocoded: ${result.data.displayName} [${coords.lat}, ${coords.lng}]`)
+        }
+        
+        // Validate coordinates
+        const validation = validateCoordinates(coords.lat, coords.lng)
+        if (validation.warning) {
+          setGeocodeWarnings(prev => ({ ...prev, [field]: validation.warning }))
+        }
+        
+        // Calculate distance if both addresses are geocoded
+        if (field === 'pickup' && geocodedDelivery) {
+          const distance = calculateDistance(coords.lat, coords.lng, geocodedDelivery.lat, geocodedDelivery.lng)
+          setEstimatedDistance(distance)
+        } else if (field === 'delivery' && geocodedPickup) {
+          const distance = calculateDistance(geocodedPickup.lat, geocodedPickup.lng, coords.lat, coords.lng)
+          setEstimatedDistance(distance)
+        }
+      } else {
+        setErrors(prev => ({
+          ...prev,
+          [`${field}Address`]: result.error
+        }))
+      }
+    } catch (error) {
+      console.error('Geocoding error:', error)
+      setErrors(prev => ({
+        ...prev,
+        [`${field}Address`]: 'Failed to geocode address. Please try again.'
+      }))
+    } finally {
+      setIsGeocoding(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
@@ -91,10 +149,19 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
       return
     }
     
+    // Validate that addresses have been geocoded
+    if (!geocodedPickup || !geocodedDelivery) {
+      setErrors(prev => ({
+        ...prev,
+        general: 'Please wait for addresses to be geocoded'
+      }))
+      return
+    }
+    
     setIsSubmitting(true)
     
     try {
-      // Create delivery request
+      // Create delivery request with geocoded coordinates
       const deliveryRequest: Omit<Delivery, 'id'> = {
         customer: {
           name: user?.email?.split('@')[0] || 'Customer',
@@ -103,12 +170,12 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
         },
         pickup: {
           address: formData.pickupAddress,
-          coordinates: { lat: 0, lng: 0 }, // Will be geocoded in real implementation
+          coordinates: geocodedPickup,
           scheduledTime: `${formData.scheduledPickupDate}T${formData.scheduledPickupTime}`
         },
         delivery: {
           address: formData.deliveryAddress,
-          coordinates: { lat: 0, lng: 0 }, // Will be geocoded in real implementation
+          coordinates: geocodedDelivery,
           scheduledTime: formData.scheduledDeliveryDate && formData.scheduledDeliveryTime 
             ? `${formData.scheduledDeliveryDate}T${formData.scheduledDeliveryTime}`
             : undefined
@@ -205,17 +272,45 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Pickup Address *
             </label>
-            <input
-              type="text"
-              value={formData.pickupAddress}
-              onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
-              className={`form-input-enhanced ${errors.pickupAddress ? 'border-red-500' : ''}`}
-              placeholder="Enter complete pickup address"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={formData.pickupAddress}
+                onChange={(e) => handleInputChange('pickupAddress', e.target.value)}
+                onBlur={(e) => handleAddressBlur('pickup', e.target.value)}
+                className={`form-input-enhanced pr-10 ${
+                  errors.pickupAddress ? 'border-red-500' : 
+                  geocodedPickup ? 'border-green-500' : ''
+                }`}
+                placeholder="e.g., Chennai, Tamil Nadu"
+              />
+              {isGeocoding && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <Loader className="h-5 w-5 text-blue-500 animate-spin" />
+                </div>
+              )}
+              {geocodedPickup && !isGeocoding && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                </div>
+              )}
+            </div>
             {errors.pickupAddress && (
               <p className="mt-1 text-sm text-red-600 flex items-center">
                 <AlertCircle className="h-4 w-4 mr-1" />
                 {errors.pickupAddress}
+              </p>
+            )}
+            {geocodedPickup && !errors.pickupAddress && (
+              <p className="mt-1 text-xs text-green-600 flex items-center">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                Location verified: {geocodedPickup.lat.toFixed(4)}, {geocodedPickup.lng.toFixed(4)}
+              </p>
+            )}
+            {geocodeWarnings.pickup && (
+              <p className="mt-1 text-xs text-yellow-600 flex items-center">
+                <AlertCircle className="h-3 w-3 mr-1" />
+                {geocodeWarnings.pickup}
               </p>
             )}
           </div>
@@ -271,17 +366,51 @@ const DeliveryRequestForm: React.FC<DeliveryRequestFormProps> = ({ onRequestSubm
             <label className="block text-sm font-medium text-gray-700 mb-2">
               Delivery Address *
             </label>
-            <input
-              type="text"
-              value={formData.deliveryAddress}
-              onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
-              className={`form-input-enhanced ${errors.deliveryAddress ? 'border-red-500' : ''}`}
-              placeholder="Enter complete delivery address"
-            />
+            <div className="relative">
+              <input
+                type="text"
+                value={formData.deliveryAddress}
+                onChange={(e) => handleInputChange('deliveryAddress', e.target.value)}
+                onBlur={(e) => handleAddressBlur('delivery', e.target.value)}
+                className={`form-input-enhanced pr-10 ${
+                  errors.deliveryAddress ? 'border-red-500' : 
+                  geocodedDelivery ? 'border-green-500' : ''
+                }`}
+                placeholder="e.g., Hyderabad - Hitech City, Telangana"
+              />
+              {isGeocoding && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <Loader className="h-5 w-5 text-blue-500 animate-spin" />
+                </div>
+              )}
+              {geocodedDelivery && !isGeocoding && (
+                <div className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  <CheckCircle className="h-5 w-5 text-green-500" />
+                </div>
+              )}
+            </div>
             {errors.deliveryAddress && (
               <p className="mt-1 text-sm text-red-600 flex items-center">
                 <AlertCircle className="h-4 w-4 mr-1" />
                 {errors.deliveryAddress}
+              </p>
+            )}
+            {geocodedDelivery && !errors.deliveryAddress && (
+              <p className="mt-1 text-xs text-green-600 flex items-center">
+                <CheckCircle className="h-3 w-3 mr-1" />
+                Location verified: {geocodedDelivery.lat.toFixed(4)}, {geocodedDelivery.lng.toFixed(4)}
+              </p>
+            )}
+            {geocodeWarnings.delivery && (
+              <p className="mt-1 text-xs text-yellow-600 flex items-center">
+                <AlertCircle className="h-3 w-3 mr-1" />
+                {geocodeWarnings.delivery}
+              </p>
+            )}
+            {estimatedDistance && (
+              <p className="mt-1 text-xs text-blue-600 flex items-center">
+                <MapPin className="h-3 w-3 mr-1" />
+                Estimated distance: {estimatedDistance} km
               </p>
             )}
           </div>

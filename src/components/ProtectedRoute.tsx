@@ -69,7 +69,7 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   // If user is authenticated but doesn't have required role
   if (isAuthenticated && user && allowedRoles.length > 0 && !allowedRoles.includes(user.role)) {
     // Redirect to appropriate dashboard based on user role
-    const redirectPath = `/${user.role}`
+    const redirectPath = `/dashboard/${user.role}`
     return <Navigate to={redirectPath} replace />
   }
 
@@ -102,14 +102,24 @@ export const CustomerOrAdminRoute = createRoleProtectedRoute(['customer', 'admin
  * (e.g., login, register pages)
  */
 export const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const { isAuthenticated, user } = useAuthStore()
+  const { isAuthenticated, user, token } = useAuthStore()
+  
+  // Debug logging
+  console.log('🔍 PublicOnlyRoute check:', {
+    isAuthenticated,
+    hasUser: !!user,
+    hasToken: !!token,
+    userRole: user?.role
+  })
 
-  // If user is authenticated, redirect to their dashboard
-  if (isAuthenticated && user) {
-    return <Navigate to={`/${user.role}`} replace />
+  // Only redirect if user is truly authenticated with valid token and user data
+  if (isAuthenticated && user && token) {
+    console.log(`🔄 Authenticated user detected, redirecting to /dashboard/${user.role}`)
+    return <Navigate to={`/dashboard/${user.role}`} replace />
   }
 
-  // User is not authenticated, render children
+  // User is not authenticated, render auth forms
+  console.log('✅ User not authenticated, showing auth form')
   return <>{children}</>
 }
 
